@@ -1,0 +1,8 @@
+streamlit>=1.36
+feedparser>=6.0.11
+pyyaml>=6.0
+python-dateutil>=2.9
+pandas>=2.2
+openai>=1.40
+anthropic>=0.34
+python-dotenv>=1.0

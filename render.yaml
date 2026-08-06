@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: sec-privacy-compliance-digest
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run app.py --server.port=$PORT --server.address=0.0.0.0 --server.headless=true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      # Add these in the Render dashboard (Environment tab) rather than here,
+      # so real keys never end up committed to the repo:
+      #   ANTHROPIC_API_KEY
+      #   OPENAI_API_KEY        (optional — either enables real AI summaries)
+      #   SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASSWORD / DIGEST_RECIPIENTS  (optional — enables email delivery)

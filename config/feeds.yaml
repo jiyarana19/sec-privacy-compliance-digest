@@ -1,0 +1,44 @@
+security:
+  - name: "The Hacker News"
+    url: "https://feeds.feedburner.com/TheHackersNews"
+  - name: "BleepingComputer"
+    url: "https://www.bleepingcomputer.com/feed/"
+  - name: "Krebs on Security"
+    url: "https://krebsonsecurity.com/feed/"
+  - name: "Dark Reading"
+    url: "https://www.darkreading.com/rss.xml"
+  - name: "CISA Advisories"
+    url: "https://www.cisa.gov/cybersecurity-advisories/all.xml"
+
+privacy:
+  - name: "IAPP News"
+    url: "https://iapp.org/news/rss/"
+  - name: "EFF Deeplinks"
+    url: "https://www.eff.org/rss/updates.xml"
+  - name: "TechCrunch Privacy"
+    url: "https://techcrunch.com/tag/privacy/feed/"
+
+compliance:
+  - name: "Compliance Week"
+    url: "https://www.complianceweek.com/rss/topic/1"
+  - name: "JD Supra Compliance"
+    url: "https://www.jdsupra.com/rss/compliance"
+  - name: "SEC Press Releases"
+    url: "https://www.sec.gov/news/pressreleases.rss"
+  - name: "FTC Press Releases"
+    url: "https://www.ftc.gov/feeds/press-release.xml"
+
+# Terms that get highlighted as tags when they appear in an article.
+# Customize this for the industries/technologies you actually care about.
+watchlist:
+  - AWS
+  - Azure
+  - GCP
+  - GDPR
+  - HIPAA
+  - CCPA
+  - SOC 2
+  - PCI DSS
+  - ISO 27001
+  - ransomware
+  - zero-day
