@@ -13,6 +13,26 @@ from generate_digest import run as run_digest
 
 st.set_page_config(page_title="Security, Privacy & Compliance Digest", page_icon="🛡️", layout="wide")
 
+
+def render_html(fragment: str):
+    """Render a raw HTML fragment via st.markdown, safely.
+
+    Streamlit's markdown renderer follows CommonMark, which has two traps for
+    multi-line f-string HTML templates like the ones below:
+      1. A blank line inside a raw-HTML block ends that block early — and an
+         empty f-string substitution (e.g. no deadline for this article) can
+         leave a line that's blank apart from whitespace.
+      2. Once back in normal Markdown parsing, any line starting with 4+
+         spaces is read as an indented code block — which Python's own
+         function-body indentation puts on *every* line of these templates.
+      Together: an empty {variable} on its own line silently turns everything
+      after it into literal escaped text instead of rendered HTML (exactly
+      what caused the <span> priority stamps to leak as visible tags).
+      Stripping each line and dropping empty ones avoids both failure modes.
+    """
+    cleaned = "\n".join(line.strip() for line in fragment.strip().splitlines() if line.strip())
+    st.markdown(cleaned, unsafe_allow_html=True)
+
 PRIORITY_STAMP = {"High": "stamp-high", "Medium": "stamp-medium", "Low": "stamp-low"}
 CATEGORY_ICONS = {"security": "🛡️", "privacy": "🔒", "compliance": "📋"}
 CATEGORY_PREFIX = {"security": "SEC", "privacy": "PRV", "compliance": "CMP"}
@@ -21,7 +41,7 @@ PERSONA_LABELS = {"security": "Security Analyst", "privacy": "Privacy Officer", 
 
 # ------------------------------------------------------------------ styling
 def inject_css():
-    st.markdown("""
+    render_html("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
 
@@ -93,17 +113,17 @@ def inject_css():
 
     .stButton>button { border-radius: 2px; border: 1px solid var(--ink); font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; }
     </style>
-    """, unsafe_allow_html=True)
+    """)
 
 
 def masthead(eyebrow, title, meta):
-    st.markdown(f"""
+    render_html(f"""
     <div class="briefing-masthead">
       <div class="briefing-eyebrow">{eyebrow}</div>
       <div class="briefing-title">{title}</div>
       <div class="briefing-meta">{meta}</div>
     </div>
-    """, unsafe_allow_html=True)
+    """)
 
 
 def render_case_card(a, ref, persona_key, show_deadline=True):
@@ -132,7 +152,7 @@ def render_case_card(a, ref, persona_key, show_deadline=True):
     if show_deadline and a.get("deadline"):
         deadline_html = f'<span class="stamp stamp-deadline">Deadline {html_lib.escape(str(a["deadline"]))}</span>'
 
-    st.markdown(f"""
+    render_html(f"""
     <div class="case-card">
       <div class="case-card-header">
         <span class="case-ref">{html_lib.escape(str(ref))}</span>
@@ -150,7 +170,7 @@ def render_case_card(a, ref, persona_key, show_deadline=True):
       <div class="case-tags">{tags_html}</div>
       {also_html}
     </div>
-    """, unsafe_allow_html=True)
+    """)
 
 
 def load_config():
@@ -347,7 +367,7 @@ elif page == "Settings":
 
     st.subheader("AI summarization")
     st.caption(
-        "Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GEMINI_API_KEY as an environment variable, a local .env "
-        "file, or a Streamlit secret. Without a key, the app automatically falls back to extractive summaries "
-        "and templated 'why it matters' notes, so it still works out of the box."
+        "Set OPENAI_API_KEY or ANTHROPIC_API_KEY as an environment variable, a local .env file, or a Streamlit "
+        "secret. Without a key, the app automatically falls back to extractive summaries and templated "
+        "'why it matters' notes, so it still works out of the box."
     )
