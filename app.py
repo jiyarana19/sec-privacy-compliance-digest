@@ -347,7 +347,7 @@ elif page == "Settings":
 
     st.subheader("AI summarization")
     st.caption(
-        "Set OPENAI_API_KEY or ANTHROPIC_API_KEY as an environment variable, a local .env file, or a Streamlit "
-        "secret. Without a key, the app automatically falls back to extractive summaries and templated "
-        "'why it matters' notes, so it still works out of the box."
+        "Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GEMINI_API_KEY as an environment variable, a local .env "
+        "file, or a Streamlit secret. Without a key, the app automatically falls back to extractive summaries "
+        "and templated 'why it matters' notes, so it still works out of the box."
     )
