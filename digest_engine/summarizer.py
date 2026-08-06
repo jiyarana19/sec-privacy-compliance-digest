@@ -101,11 +101,18 @@ def _call_anthropic(article, client, model="claude-sonnet-4-6"):
     return "".join(b.text for b in resp.content if b.type == "text").strip()
 
 
+def _call_gemini(article, client, model="gemini-2.0-flash"):
+    resp = client.models.generate_content(model=model, contents=_prompt_for(article))
+    return resp.text.strip()
+
+
 def get_summarizer():
     """Return a summarize(article) -> (summary, why_it_matters_dict) function
-    based on available API keys."""
+    based on available API keys. Checked in order: OpenAI, Anthropic, Gemini,
+    then the dependency-free fallback."""
     openai_key = os.environ.get("OPENAI_API_KEY")
     anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
+    gemini_key = os.environ.get("GEMINI_API_KEY")
 
     if openai_key:
         try:
@@ -122,6 +129,14 @@ def get_summarizer():
             return lambda article: _parse_llm_response(_call_anthropic(article, client), article)
         except Exception as e:
             print(f"[summarizer] Anthropic init failed, falling back: {e}")
+
+    if gemini_key:
+        try:
+            from google import genai
+            client = genai.Client(api_key=gemini_key)
+            return lambda article: _parse_llm_response(_call_gemini(article, client), article)
+        except Exception as e:
+            print(f"[summarizer] Gemini init failed, falling back: {e}")
 
     print("[summarizer] No LLM API key found — using extractive fallback summaries.")
     return lambda article: (_fallback_summary(article), _fallback_why_it_matters(article))
