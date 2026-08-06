@@ -101,15 +101,18 @@ def _call_anthropic(article, client, model="claude-sonnet-4-6"):
     return "".join(b.text for b in resp.content if b.type == "text").strip()
 
 
-def _call_gemini(article, client, model="gemini-2.0-flash"):
-    resp = client.models.generate_content(model=model, contents=_prompt_for(article))
-    return resp.text.strip()
+def _call_gemini(article, client, model="gemini-2.5-flash"):
+    resp = client.models.generate_content(
+        model=model,
+        contents=_prompt_for(article),
+    )
+    return (resp.text or "").strip()
 
 
 def get_summarizer():
     """Return a summarize(article) -> (summary, why_it_matters_dict) function
     based on available API keys. Checked in order: OpenAI, Anthropic, Gemini,
-    then the dependency-free fallback."""
+    then the dependency-free extractive fallback."""
     openai_key = os.environ.get("OPENAI_API_KEY")
     anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
     gemini_key = os.environ.get("GEMINI_API_KEY")
