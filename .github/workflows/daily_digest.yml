@@ -1,0 +1,53 @@
+name: Daily Digest
+
+on:
+  schedule:
+    - cron: "0 8 * * *"   # 8:00 AM UTC daily — adjust to your timezone
+  workflow_dispatch: {}    # lets you trigger it manually from the Actions tab
+  push:
+    branches: [main]
+
+permissions:
+  contents: write   # required to commit digest.db back to the repo — many
+                     # repos default this to read-only, which fails the push step
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt pytest
+      - run: pytest tests/ -v
+
+  run-digest:
+    if: github.event_name != 'push'   # don't fetch/email on every code push, only on schedule or manual trigger
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install -r requirements.txt
+
+      - name: Generate digest and send email
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          DIGEST_RECIPIENTS: ${{ secrets.DIGEST_RECIPIENTS }}
+        run: python generate_digest.py --hours 24 --email
+
+      - name: Commit updated digest database
+        run: |
+          git config user.name "digest-bot"
+          git config user.email "digest-bot@users.noreply.github.com"
+          git add -f digest.db
+          git diff --staged --quiet || git commit -m "Update digest $(date +'%Y-%m-%d')"
+          git push
