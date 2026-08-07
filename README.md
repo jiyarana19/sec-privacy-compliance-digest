@@ -49,8 +49,10 @@ specific problems:
 | **Score** | Rule-based priority tagging — **High / Medium / Low** — based on severity language (e.g. "actively exploited", "data breach", "enforcement action") |
 | **Extract deadlines** | Pulls hard dates out of prose (e.g. "must comply by April 27, 2027") into a structured field, surfaced in the dedicated **Deadline Docket** view |
 | **Tag** | Flags articles matching a custom watchlist (e.g. `AWS`, `GDPR`, `HIPAA`, `ransomware`) so you can track what's relevant to *your* stack |
-| **Summarize** | AI-generated 2-sentence neutral summary, plus three role-specific **"why it matters"** notes (Security Analyst / Privacy Officer / Compliance Officer) — switchable in the dashboard. Falls back to extractive summaries and templated persona notes if no API key is configured |
-| **Deliver** | Live filterable dashboard **and** an HTML email digest |
+| **Summarize** | AI-generated 2-sentence neutral summary, plus three role-specific **"why it matters"** notes (Security Analyst / Privacy Officer / Compliance Officer) — switchable in the dashboard. Uses OpenAI, Anthropic, or Gemini (whichever key is set), and falls back to extractive summaries and templated persona notes if none are configured |
+| **Alert** | Articles matching your watchlist surface in a dedicated alert banner at the top of the dashboard, regardless of the priority filter — so a keyword hit never gets hidden by a "Low priority" filter |
+| **Deliver** | Live filterable dashboard, one-click **PDF export**, and an HTML email digest |
+| **Track** | Mark articles read/unread and bookmark ("Save") them for later — a dedicated **Saved** page collects everything you've bookmarked across every past digest |
 | **Archive** | Every run is stored in SQLite (idempotent per day — re-running never duplicates rows) so you can browse history and see volume trends over time |
 
 ## What makes this different from a plain RSS-to-email bot
@@ -70,11 +72,17 @@ specific problems:
 - **Personalization** — a watchlist lets each team highlight what's
   relevant to their environment.
 - **Two delivery surfaces** — a live dashboard for daily browsing and
-  filtering, plus an email digest for people who don't log in.
+  filtering, plus an optional email digest for people who don't log in
+  (see the note on email setup below).
+- **Read/bookmark tracking** — mark articles read so a re-visit isn't a
+  wall of the same cards, and save anything worth revisiting to a
+  dedicated Saved page.
+- **One-click PDF export** — download the current filtered view as a
+  clean report, useful for sharing in a meeting without a login.
 - **Works without any API key** — the AI summarizer has a built-in
   extractive fallback (including templated persona notes), so the app is
   fully functional out of the box and upgrades automatically once you add
-  an `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`.
+  an `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY`.
 
 ## Architecture
 
@@ -84,11 +92,12 @@ digest_engine/
   feeds.py                → RSS fetching
   dedupe.py                → recency filter + fuzzy deduplication
   scorer.py                → priority scoring + watchlist tagging
-  summarizer.py             → AI summaries (OpenAI / Anthropic / fallback)
-  storage.py                → SQLite persistence + archive queries
+  summarizer.py             → AI summaries (OpenAI / Anthropic / Gemini / fallback)
+  storage.py                → SQLite persistence, archive queries, read/bookmark state, subscribers
   emailer.py                → HTML digest + SMTP delivery
+  pdf_export.py              → one-click PDF report generation
 generate_digest.py        → CLI orchestrator (fetch → ... → store → email)
-app.py                     → Streamlit dashboard (Dashboard / Archive & Trends / Settings)
+app.py                     → Streamlit dashboard (Dashboard / Deadline Docket / Saved / Archive & Trends / Settings)
 .github/workflows/         → scheduled daily run + email via GitHub Actions
 ```
 
@@ -121,24 +130,48 @@ and the watchlist from the **Settings** tab in the dashboard itself.
 
 | Variable | Purpose | Required? |
 |---|---|---|
-| `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` | Enables real AI summaries | No — falls back to extractive summaries |
-| `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_HOST`, `SMTP_PORT`, `DIGEST_RECIPIENTS` | Enables email delivery | No — dashboard works without it |
+| `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY` | Enables real AI summaries (checked in that order) | No — falls back to extractive summaries |
+| `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_HOST`, `SMTP_PORT` | The **sending** account for email delivery | No — dashboard and PDF export work fully without it |
+
+**Who receives the email** is managed separately from the sending account —
+anyone using the dashboard can type their email into **Settings → Email
+delivery → Connect Email**, no config file or redeploy needed. This is
+stored in `subscribers` in the SQLite database and is additive to (or a
+replacement for) the older `DIGEST_RECIPIENTS` env variable approach.
+
+> **Current status of this deployment:** email delivery is built and
+> tested, but the sending account (`SMTP_USER`/`SMTP_PASSWORD`) has **not
+> been configured** for the live demo — it wasn't required for this
+> submission. The dashboard, PDF export, and every other feature work
+> fully without it. To enable it, generate a Gmail
+> [App Password](https://myaccount.google.com/apppasswords) and add the
+> four SMTP variables above under the hosting platform's environment
+> variables — takes about five minutes, no code changes needed.
 
 ## Deployment
 
-### Option A — Hugging Face Spaces (recommended for a live demo)
-1. Create a new Space → SDK: **Streamlit**.
-2. Push this repo's contents to the Space's git remote (Spaces are git
-   repos). Hugging Face will scaffold a `README.md` with required YAML
-   frontmatter (`sdk: streamlit`, `app_file: app.py`) — keep that
-   frontmatter and append this file's content below it.
-3. Add `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / SMTP variables under
-   **Space settings → Repository secrets** if you want AI summaries
-   or email.
-4. The Space builds automatically and gives you a public URL —
-   this is your live demo link.
+### Option A — Render (used for the live demo of this project)
+1. New Web Service → connect this GitHub repo. Render auto-detects the
+   build/start commands from `render.yaml` in this repo.
+2. Instance type: **Free**.
+3. Add `GEMINI_API_KEY` (or `OPENAI_API_KEY`/`ANTHROPIC_API_KEY`) under
+   **Environment** for real AI summaries. SMTP variables are optional —
+   see the note above.
+4. Deploy — you get a public URL like
+   `https://your-service.onrender.com`.
 
-### Option B — Streamlit Community Cloud
+> Free tier spins down after ~15 minutes idle and takes 30–60s to wake
+> back up on the next visit — open the app a couple of minutes before a
+> demo so it's warm.
+
+### Option B — Hugging Face Spaces
+Note: Spaces' free tier only covers the **Static** SDK, which can't run
+a Python/Streamlit backend — Gradio and Docker Spaces (which can) require
+a paid plan on some accounts. Render (above) is the tested, fully-free
+path for this project; use HF Spaces only if your account has Docker/
+Gradio access.
+
+### Option C — Streamlit Community Cloud
 1. Push this repo to GitHub.
 2. On [share.streamlit.io](https://share.streamlit.io), deploy from
    the repo, set `app.py` as the entry point.
@@ -160,5 +193,6 @@ back to the repo. Add the same secrets under
 ## Roadmap ideas
 - Slack/Teams delivery alongside email
 - LLM-assisted priority scoring layered on top of the rule-based scorer
-- Per-user saved watchlists and digest preferences
-- "Mark as reviewed" workflow for compliance audit trails
+- Per-user custom watchlists (currently one shared watchlist per deployment)
+- Swap SQLite for a hosted database (Supabase/Postgres/Turso) for true
+  persistence across redeploys — see the architecture note above
