@@ -221,8 +221,9 @@ if page == "Dashboard":
     masthead("Daily Briefing", "Security, Privacy & Compliance Digest", "")
 
     dates = storage.get_available_dates()
-    col_a, col_b, col_c = st.columns([3, 1, 1])
-    with col_b:
+
+    col_btn1, col_btn2, col_date, spacer = st.columns([1.3, 1.3, 1.8, 2.6])
+    with col_btn1:
         if st.button("Run Digest Now", use_container_width=True):
             with st.spinner("Fetching feeds and summarizing..."):
                 run_date, _ = run_digest(hours=24, send_email=False)
@@ -233,10 +234,17 @@ if page == "Dashboard":
         st.info("No briefing on file yet. Click **Run Digest Now** to pull today's coverage.")
         st.stop()
 
-    with col_a:
-        selected_date = st.selectbox("Digest date", dates, index=0)
+    with col_date:
+        # A dropdown only earns its place once there's actually more than one
+        # date to pick between — with a single date it's just clutter, so we
+        # show it as a plain label instead.
+        if len(dates) > 1:
+            selected_date = st.selectbox("Digest date", dates, index=0, label_visibility="collapsed")
+        else:
+            selected_date = dates[0]
+            st.caption(f"Briefing date: {selected_date}")
 
-    with col_c:
+    with col_btn2:
         _pdf_articles = storage.get_digest(selected_date)
         if _pdf_articles:
             st.download_button(
