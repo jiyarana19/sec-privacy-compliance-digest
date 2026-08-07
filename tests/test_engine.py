@@ -194,3 +194,113 @@ def test_summarizer_fallback_works_without_api_key(monkeypatch):
     summary, why_it_matters = summarize(article)
     assert summary  # non-empty
     assert set(why_it_matters.keys()) == {"security", "privacy", "compliance"}
+
+
+# ------------------------------------------------------- read/bookmark state
+def test_mark_read_and_get_state_map(tmp_path):
+    db_path = str(tmp_path / "test.db")
+    storage.save_digest(
+        [{"category": "security", "title": "t", "link": "https://a.com/1", "source": "S",
+          "published": "2026-08-05", "priority": "High", "summary": "s"}],
+        path=db_path, run_date="2026-08-05",
+    )
+    assert storage.get_state_map(["https://a.com/1"], path=db_path) == {}
+
+    storage.mark_read("https://a.com/1", path=db_path)
+    state = storage.get_state_map(["https://a.com/1"], path=db_path)
+    assert state["https://a.com/1"] == {"read": True, "bookmarked": False}
+
+
+def test_toggle_bookmark_flips_and_returns_new_value(tmp_path):
+    db_path = str(tmp_path / "test.db")
+    storage.save_digest(
+        [{"category": "security", "title": "t", "link": "https://a.com/1", "source": "S",
+          "published": "2026-08-05", "priority": "High", "summary": "s"}],
+        path=db_path, run_date="2026-08-05",
+    )
+    assert storage.toggle_bookmark("https://a.com/1", path=db_path) is True
+    assert storage.get_bookmarked(path=db_path)[0]["link"] == "https://a.com/1"
+    assert storage.toggle_bookmark("https://a.com/1", path=db_path) is False
+    assert storage.get_bookmarked(path=db_path) == []
+
+
+def test_bookmarked_article_survives_being_absent_from_latest_run(tmp_path):
+    """A bookmark should still resolve to something readable even if that
+    link doesn't appear in the most recent digest run."""
+    db_path = str(tmp_path / "test.db")
+    storage.save_digest(
+        [{"category": "privacy", "title": "Older story", "link": "https://a.com/old",
+          "source": "S", "published": "2026-08-01", "priority": "Medium", "summary": "s"}],
+        path=db_path, run_date="2026-08-01",
+    )
+    storage.toggle_bookmark("https://a.com/old", path=db_path)
+    storage.save_digest(
+        [{"category": "security", "title": "Newer, unrelated story", "link": "https://a.com/new",
+          "source": "S", "published": "2026-08-05", "priority": "High", "summary": "s"}],
+        path=db_path, run_date="2026-08-05",
+    )
+    saved = storage.get_bookmarked(path=db_path)
+    assert len(saved) == 1
+    assert saved[0]["title"] == "Older story"
+
+
+# ------------------------------------------------------------------ PDF export
+def test_pdf_export_produces_valid_pdf_bytes():
+    from digest_engine.pdf_export import build_pdf
+    articles = [
+        {"category": "security", "priority": "High", "title": "Test headline",
+         "source": "Source", "published": "2026-08-05", "summary": "Summary text.",
+         "deadline": None, "link": "https://a.com/1"},
+    ]
+    pdf_bytes = build_pdf(articles, "2026-08-05")
+    assert pdf_bytes[:5] == b"%PDF-"
+    assert len(pdf_bytes) > 500
+
+
+def test_pdf_export_handles_unicode_and_empty_fields_without_crashing():
+    from digest_engine.pdf_export import build_pdf
+    tricky = [
+        {"category": "privacy", "priority": "Medium",
+         "title": "Company \u2018confirms\u2019 breach \u2014 users affected",
+         "source": "", "published": "", "summary": "", "deadline": "2026-06-01",
+         "link": "https://a.com/2"},
+        {"category": "compliance", "priority": "Low", "title": "No link article",
+         "source": "S", "published": "2026-08-05", "summary": "s", "deadline": None, "link": ""},
+    ]
+    pdf_bytes = build_pdf(tricky, "2026-08-05")  # should not raise
+    assert pdf_bytes[:5] == b"%PDF-"
+
+
+def test_pdf_export_paginates_large_digests():
+    from digest_engine.pdf_export import build_pdf
+    from pypdf import PdfReader
+    import io
+    articles = [
+        {"category": ["security", "privacy", "compliance"][i % 3], "priority": "Medium",
+         "title": f"Article {i} with a moderately long headline for wrapping purposes",
+         "source": "Source", "published": "2026-08-05",
+         "summary": "A summary long enough to occupy multiple lines in the rendered PDF output.",
+         "deadline": None, "link": f"https://a.com/{i}"}
+        for i in range(25)
+    ]
+    pdf_bytes = build_pdf(articles, "2026-08-05")
+    reader = PdfReader(io.BytesIO(pdf_bytes))
+    assert len(reader.pages) > 1
+
+
+# ------------------------------------------------------------- watchlist alerts
+def test_watchlist_match_detectable_for_alert_banner(tmp_path):
+    """The dashboard's alert banner filters on non-empty watchlist_matches —
+    confirm that field actually gets populated end to end through the
+    normal enrich pipeline, not just in scorer's own unit tests."""
+    db_path = str(tmp_path / "test.db")
+    article = make_article(
+        "Acme Corp discloses new vulnerability", "https://a.com/1",
+        "Acme Corp's product was found vulnerable.", "security",
+    )
+    enriched = scorer.enrich(dedupe.deduplicate([article]), watchlist=["Acme Corp"])
+    enriched = summarizer.summarize_articles(enriched)
+    storage.save_digest(enriched, path=db_path, run_date="2026-08-05")
+
+    saved = storage.get_digest("2026-08-05", path=db_path)
+    assert saved[0]["watchlist_matches"] == ["Acme Corp"]
