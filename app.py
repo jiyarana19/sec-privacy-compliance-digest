@@ -9,6 +9,7 @@ from datetime import date
 import yaml
 
 from digest_engine import storage
+from digest_engine.pdf_export import build_pdf
 from generate_digest import run as run_digest
 
 st.set_page_config(page_title="Security, Privacy & Compliance Digest", page_icon="🛡️", layout="wide")
@@ -86,7 +87,9 @@ def inject_css():
     h1, h3 { font-family: 'Source Serif 4', serif !important; color: var(--ink) !important; }
     h3 { border-bottom: 1px solid var(--line); padding-bottom: 6px; }
 
-    .case-card { background: var(--panel); border: 1px solid var(--line); border-radius: 2px; padding: 14px 16px; margin-bottom: 12px; }
+    .case-card { background: var(--panel); border: 1px solid var(--line); border-radius: 2px; padding: 14px 16px; margin-bottom: 4px; }
+    .case-card-read { opacity: 0.5; }
+    .case-card-bookmarked { border-left: 3px solid var(--accent-navy); }
     .case-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
     .case-ref { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--steel-600); letter-spacing: 0.04em; }
     .case-header-stamps { display: flex; gap: 6px; align-items: center; }
@@ -126,12 +129,15 @@ def masthead(eyebrow, title, meta):
     """)
 
 
-def render_case_card(a, ref, persona_key, show_deadline=True):
+def render_case_card(a, ref, persona_key, show_deadline=True, state=None):
+    state = state or {"read": False, "bookmarked": False}
+    link_raw = a["link"]
+
     stamp_class = PRIORITY_STAMP.get(a["priority"], "stamp-low")
     title = html_lib.escape(str(a["title"]))
     source = html_lib.escape(str(a["source"]))
     summary = html_lib.escape(str(a["summary"]))
-    link = html_lib.escape(str(a["link"]), quote=True)
+    link = html_lib.escape(str(link_raw), quote=True)
     tags_html = "".join(f"<span>{html_lib.escape(str(t))}</span>" for t in a["watchlist_matches"])
 
     why = a.get("why_it_matters") or {}
@@ -152,8 +158,14 @@ def render_case_card(a, ref, persona_key, show_deadline=True):
     if show_deadline and a.get("deadline"):
         deadline_html = f'<span class="stamp stamp-deadline">Deadline {html_lib.escape(str(a["deadline"]))}</span>'
 
+    card_classes = "case-card"
+    if state["read"]:
+        card_classes += " case-card-read"
+    if state["bookmarked"]:
+        card_classes += " case-card-bookmarked"
+
     render_html(f"""
-    <div class="case-card">
+    <div class="{card_classes}">
       <div class="case-card-header">
         <span class="case-ref">{html_lib.escape(str(ref))}</span>
         <span class="case-header-stamps">
@@ -172,6 +184,21 @@ def render_case_card(a, ref, persona_key, show_deadline=True):
     </div>
     """)
 
+    # Compact action row right under the card — read/bookmark state is
+    # global per-link (see storage.get_state_map), so toggling here affects
+    # this article everywhere it appears, not just in this list.
+    btn_col1, btn_col2, spacer = st.columns([1.3, 1.3, 5])
+    with btn_col1:
+        read_label = "\u2713 Read" if state["read"] else "Mark read"
+        if st.button(read_label, key=f"read_{ref}_{link_raw}", use_container_width=True):
+            storage.mark_read(link_raw, not state["read"])
+            st.rerun()
+    with btn_col2:
+        bm_label = "\u2605 Saved" if state["bookmarked"] else "\u2606 Save"
+        if st.button(bm_label, key=f"bm_{ref}_{link_raw}", use_container_width=True):
+            storage.toggle_bookmark(link_raw)
+            st.rerun()
+
 
 def load_config():
     with open("config/feeds.yaml", "r") as f:
@@ -187,7 +214,7 @@ inject_css()
 
 st.sidebar.markdown("### Digest Control")
 st.sidebar.caption("AI-curated coverage across security, privacy & compliance")
-page = st.sidebar.radio("Navigate", ["Dashboard", "Deadline Docket", "Archive & Trends", "Settings"])
+page = st.sidebar.radio("Navigate", ["Dashboard", "Deadline Docket", "Saved", "Archive & Trends", "Settings"])
 
 # ---------------------------------------------------------------- Dashboard
 if page == "Dashboard":
@@ -198,7 +225,7 @@ if page == "Dashboard":
     )
 
     dates = storage.get_available_dates()
-    col_a, col_b = st.columns([3, 1])
+    col_a, col_b, col_c = st.columns([3, 1, 1])
     with col_b:
         if st.button("Run Digest Now", use_container_width=True):
             with st.spinner("Fetching feeds and summarizing..."):
@@ -213,6 +240,15 @@ if page == "Dashboard":
     with col_a:
         selected_date = st.selectbox("Digest date", dates, index=0)
 
+    with col_c:
+        _pdf_articles = storage.get_digest(selected_date)
+        if _pdf_articles:
+            st.download_button(
+                "\U0001F4C4 Export PDF", data=build_pdf(_pdf_articles, selected_date),
+                file_name=f"digest_{selected_date}.pdf", mime="application/pdf",
+                use_container_width=True,
+            )
+
     persona_choice = st.radio(
         "View as", list(PERSONA_LABELS.values()), horizontal=True,
         help="Changes which 'why it matters' note is shown on each card.",
@@ -222,11 +258,25 @@ if page == "Dashboard":
     articles = storage.get_digest(selected_date)
     df = pd.DataFrame(articles)
 
-    m1, m2, m3, m4 = st.columns(4)
+    all_links = df["link"].tolist() if not df.empty else []
+    state_map = storage.get_state_map(all_links)
+
+    m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("Articles", len(df))
     m2.metric("High priority", int((df["priority"] == "High").sum()) if not df.empty else 0)
     m3.metric("Categories", df["category"].nunique() if not df.empty else 0)
     m4.metric("Sources", df["source"].nunique() if not df.empty else 0)
+    m5.metric("Saved", sum(1 for s in state_map.values() if s["bookmarked"]))
+
+    # Watchlist alerts — surfaced above the normal filtered view regardless
+    # of the priority/category filters below, since a watchlist keyword hit
+    # (e.g. your own company name) matters even if it landed as Low priority.
+    if not df.empty:
+        watchlist_hits = df[df["watchlist_matches"].apply(lambda m: len(m) > 0)]
+        if not watchlist_hits.empty:
+            with st.expander(f"\U0001F514 {len(watchlist_hits)} article(s) match your watchlist keywords", expanded=False):
+                for idx, (_, a) in enumerate(watchlist_hits.iterrows(), start=1):
+                    render_case_card(a, f"ALERT-{idx:03d}", "security", state=state_map.get(a["link"]))
 
     st.divider()
 
@@ -260,7 +310,7 @@ if page == "Dashboard":
         st.subheader(f"{CATEGORY_ICONS[category]} {category.capitalize()} ({len(cat_items)})")
         for idx, (_, a) in enumerate(cat_items.iterrows(), start=1):
             ref = f"{CATEGORY_PREFIX[category]}-{idx:03d}"
-            render_case_card(a, ref, persona_key)
+            render_case_card(a, ref, persona_key, state=state_map.get(a["link"]))
 
 # ------------------------------------------------------------- Deadline Docket
 elif page == "Deadline Docket":
@@ -275,16 +325,32 @@ elif page == "Deadline Docket":
     upcoming = [d for d in deadlines if d["deadline"] >= today_str]
     past = [d for d in deadlines if d["deadline"] < today_str]
 
+    _dd_state = storage.get_state_map([d["link"] for d in deadlines])
+
     st.subheader(f"Upcoming ({len(upcoming)})")
     if not upcoming:
         st.info("No upcoming deadlines detected in current coverage.")
     for d in upcoming:
-        render_case_card(d, d["deadline"], "compliance", show_deadline=False)
+        render_case_card(d, d["deadline"], "compliance", show_deadline=False, state=_dd_state.get(d["link"]))
 
     if past:
         with st.expander(f"Past deadlines ({len(past)})"):
             for d in past:
-                render_case_card(d, d["deadline"], "compliance", show_deadline=False)
+                render_case_card(d, d["deadline"], "compliance", show_deadline=False, state=_dd_state.get(d["link"]))
+
+# ---------------------------------------------------------------------- Saved
+elif page == "Saved":
+    masthead("Reading List", "Saved Articles", "Bookmarked from any briefing, kept until you remove them")
+
+    saved = storage.get_bookmarked()
+    if not saved:
+        st.info("Nothing saved yet — click the \u2606 Save button on any article to add it here.")
+        st.stop()
+
+    saved_state = storage.get_state_map([a["link"] for a in saved])
+    for idx, a in enumerate(saved, start=1):
+        render_case_card(a, f"SAVED-{idx:03d}", "security", state=saved_state.get(a["link"]))
+
 
 # ---------------------------------------------------------- Archive & Trends
 elif page == "Archive & Trends":
