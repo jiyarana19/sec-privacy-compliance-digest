@@ -304,3 +304,19 @@ def test_watchlist_match_detectable_for_alert_banner(tmp_path):
 
     saved = storage.get_digest("2026-08-05", path=db_path)
     assert saved[0]["watchlist_matches"] == ["Acme Corp"]
+
+
+# --------------------------------------------------------------- subscribers
+def test_add_subscriber_normalizes_and_dedupes(tmp_path):
+    db_path = str(tmp_path / "test.db")
+    storage.add_subscriber("  Test@Example.com  ", path=db_path)
+    storage.add_subscriber("test@example.com", path=db_path)  # same, different case/whitespace
+    assert storage.get_subscribers(path=db_path) == ["test@example.com"]
+
+
+def test_remove_subscriber(tmp_path):
+    db_path = str(tmp_path / "test.db")
+    storage.add_subscriber("a@x.com", path=db_path)
+    storage.add_subscriber("b@x.com", path=db_path)
+    storage.remove_subscriber("a@x.com", path=db_path)
+    assert storage.get_subscribers(path=db_path) == ["b@x.com"]
