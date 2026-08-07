@@ -36,6 +36,19 @@ def init_db(path=DB_PATH):
             identifiers TEXT
         )
     """)
+    # Read/bookmark state is tracked separately, keyed by the article's link
+    # rather than its digests.id — the same story can appear in multiple
+    # run_dates (e.g. still open in Archive & Trends the next day), and a
+    # single global state per link is what makes "already read" mean
+    # anything sensible across those repeats.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS article_state (
+            link TEXT PRIMARY KEY,
+            is_read INTEGER NOT NULL DEFAULT 0,
+            is_bookmarked INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT
+        )
+    """)
     # Lightweight migration for databases created before these columns existed.
     existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(digests)").fetchall()}
     for col in _NEW_COLUMNS:
@@ -89,6 +102,75 @@ def _hydrate(row):
     d["cross_categories"] = json.loads(d["cross_categories"] or "[]")
     d["identifiers"] = json.loads(d["identifiers"] or "[]")
     return d
+
+
+def get_state_map(links, path=DB_PATH):
+    """Batch-fetch read/bookmark state for a list of links in one query,
+    instead of one query per card (matters once a digest has 50+ articles)."""
+    if not links:
+        return {}
+    conn = init_db(path)
+    conn.row_factory = sqlite3.Row
+    placeholders = ",".join("?" for _ in links)
+    rows = conn.execute(
+        f"SELECT link, is_read, is_bookmarked FROM article_state WHERE link IN ({placeholders})",
+        list(links),
+    ).fetchall()
+    conn.close()
+    return {r["link"]: {"read": bool(r["is_read"]), "bookmarked": bool(r["is_bookmarked"])} for r in rows}
+
+
+def _upsert_state(link, path, **fields):
+    conn = init_db(path)
+    existing = conn.execute("SELECT link FROM article_state WHERE link = ?", (link,)).fetchone()
+    now = datetime.now(timezone.utc).isoformat()
+    if existing:
+        set_clause = ", ".join(f"{k} = ?" for k in fields)
+        conn.execute(
+            f"UPDATE article_state SET {set_clause}, updated_at = ? WHERE link = ?",
+            (*fields.values(), now, link),
+        )
+    else:
+        cols = ["link", *fields.keys(), "updated_at"]
+        placeholders = ",".join("?" for _ in cols)
+        conn.execute(
+            f"INSERT INTO article_state ({', '.join(cols)}) VALUES ({placeholders})",
+            (link, *fields.values(), now),
+        )
+    conn.commit()
+    conn.close()
+
+
+def mark_read(link, read=True, path=DB_PATH):
+    _upsert_state(link, path, is_read=int(read))
+
+
+def toggle_bookmark(link, path=DB_PATH):
+    """Flips bookmark state and returns the new value, so the caller can
+    update the UI immediately without a second read."""
+    conn = init_db(path)
+    row = conn.execute("SELECT is_bookmarked FROM article_state WHERE link = ?", (link,)).fetchone()
+    conn.close()
+    new_value = not bool(row[0]) if row else True
+    _upsert_state(link, path, is_bookmarked=int(new_value))
+    return new_value
+
+
+def get_bookmarked(path=DB_PATH):
+    """All bookmarked articles, most recently bookmarked first, joined
+    against the most recent digests row for each link so titles/summaries
+    are available even if the link fell out of the active date range."""
+    conn = init_db(path)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute("""
+        SELECT d.* FROM digests d
+        INNER JOIN article_state s ON s.link = d.link
+        WHERE s.is_bookmarked = 1
+        AND d.id = (SELECT MAX(id) FROM digests WHERE link = d.link)
+        ORDER BY s.updated_at DESC
+    """).fetchall()
+    conn.close()
+    return [_hydrate(r) for r in rows]
 
 
 def get_digest(run_date, path=DB_PATH):
