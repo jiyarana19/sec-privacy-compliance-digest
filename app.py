@@ -119,12 +119,13 @@ def inject_css():
     """)
 
 
-def masthead(eyebrow, title, meta):
+def masthead(eyebrow, title, meta=""):
+    meta_html = f'<div class="briefing-meta">{meta}</div>' if meta else ""
     render_html(f"""
     <div class="briefing-masthead">
       <div class="briefing-eyebrow">{eyebrow}</div>
       <div class="briefing-title">{title}</div>
-      <div class="briefing-meta">{meta}</div>
+      {meta_html}
     </div>
     """)
 
@@ -213,16 +214,11 @@ def save_config(config):
 inject_css()
 
 st.sidebar.markdown("### Digest Control")
-st.sidebar.caption("AI-curated coverage across security, privacy & compliance")
 page = st.sidebar.radio("Navigate", ["Dashboard", "Deadline Docket", "Saved", "Archive & Trends", "Settings"])
 
 # ---------------------------------------------------------------- Dashboard
 if page == "Dashboard":
-    masthead(
-        "Daily Briefing &middot; Internal Distribution",
-        "Security, Privacy &amp; Compliance Digest",
-        "Prioritized &middot; Deduplicated &middot; Refreshed on demand",
-    )
+    masthead("Daily Briefing", "Security, Privacy & Compliance Digest", "")
 
     dates = storage.get_available_dates()
     col_a, col_b, col_c = st.columns([3, 1, 1])
@@ -249,10 +245,7 @@ if page == "Dashboard":
                 use_container_width=True,
             )
 
-    persona_choice = st.radio(
-        "View as", list(PERSONA_LABELS.values()), horizontal=True,
-        help="Changes which 'why it matters' note is shown on each card.",
-    )
+    persona_choice = st.radio("View as", list(PERSONA_LABELS.values()), horizontal=True)
     persona_key = [k for k, v in PERSONA_LABELS.items() if v == persona_choice][0]
 
     articles = storage.get_digest(selected_date)
@@ -314,7 +307,7 @@ if page == "Dashboard":
 
 # ------------------------------------------------------------- Deadline Docket
 elif page == "Deadline Docket":
-    masthead("Compliance Calendar", "Deadline Docket", "Every dated obligation surfaced from recent coverage")
+    masthead("Compliance Calendar", "Deadline Docket", "")
 
     deadlines = storage.get_upcoming_deadlines()
     if not deadlines:
@@ -340,7 +333,7 @@ elif page == "Deadline Docket":
 
 # ---------------------------------------------------------------------- Saved
 elif page == "Saved":
-    masthead("Reading List", "Saved Articles", "Bookmarked from any briefing, kept until you remove them")
+    masthead("Reading List", "Saved Articles", "")
 
     saved = storage.get_bookmarked()
     if not saved:
@@ -354,7 +347,7 @@ elif page == "Saved":
 
 # ---------------------------------------------------------- Archive & Trends
 elif page == "Archive & Trends":
-    masthead("Records Room", "Archive &amp; Trends", "Historical volume across every past briefing")
+    masthead("Records Room", "Archive & Trends", "")
 
     dates = storage.get_available_dates()
     if not dates:
@@ -378,7 +371,7 @@ elif page == "Archive & Trends":
 
 # ---------------------------------------------------------------- Settings
 elif page == "Settings":
-    masthead("Configuration", "Settings", "Sources, watchlist, delivery & AI summarization")
+    masthead("Configuration", "Settings", "")
 
     config = load_config()
 
@@ -403,7 +396,6 @@ elif page == "Settings":
                 st.rerun()
 
     st.subheader("Watchlist keywords")
-    st.caption("Terms that get highlighted as tags on matching articles.")
     watchlist = config.get("watchlist", [])
     wl_text = st.text_area("One per line", "\n".join(watchlist), height=150)
     if st.button("Save watchlist"):
@@ -412,28 +404,32 @@ elif page == "Settings":
         st.success("Watchlist updated.")
 
     st.subheader("Email delivery")
-    st.caption(
-        "Configure via environment variables, a local .env file, or Streamlit secrets: "
-        "SMTP_USER, SMTP_PASSWORD, DIGEST_RECIPIENTS, SMTP_HOST, SMTP_PORT."
-    )
-    st.code(
-        "SMTP_HOST=smtp.gmail.com\nSMTP_PORT=587\nSMTP_USER=you@gmail.com\n"
-        "SMTP_PASSWORD=your_app_password\nDIGEST_RECIPIENTS=team@company.com,alerts@company.com",
-        language="bash",
-    )
-    if st.button("Send test digest email now"):
+    subscribers = storage.get_subscribers()
+
+    ec1, ec2 = st.columns([4, 1])
+    with ec1:
+        new_email = st.text_input("Your email", label_visibility="collapsed", placeholder="you@company.com")
+    with ec2:
+        if st.button("Connect Email", use_container_width=True) and new_email and "@" in new_email:
+            storage.add_subscriber(new_email)
+            st.rerun()
+
+    if subscribers:
+        for email in subscribers:
+            r1, r2 = st.columns([5, 1])
+            r1.write(email)
+            if r2.button("Remove", key=f"unsub_{email}"):
+                storage.remove_subscriber(email)
+                st.rerun()
+
+    if st.button("Send digest now"):
         dates = storage.get_available_dates()
         if not dates:
             st.error("Run a digest first — there's nothing to send yet.")
+        elif not subscribers:
+            st.error("Connect an email above first.")
         else:
             from digest_engine import emailer
             arts = storage.get_digest(dates[0])
-            ok = emailer.send_email(arts, dates[0])
-            st.success("Email sent.") if ok else st.error("Email not sent — check the SMTP settings above.")
-
-    st.subheader("AI summarization")
-    st.caption(
-        "Set OPENAI_API_KEY or ANTHROPIC_API_KEY as an environment variable, a local .env file, or a Streamlit "
-        "secret. Without a key, the app automatically falls back to extractive summaries and templated "
-        "'why it matters' notes, so it still works out of the box."
-    )
+            ok = emailer.send_email(arts, dates[0], recipients=subscribers)
+            st.success("Sent!") if ok else st.error("Couldn't send — the app's sender account isn't configured yet.")
