@@ -49,6 +49,12 @@ def init_db(path=DB_PATH):
             updated_at TEXT
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS subscribers (
+            email TEXT PRIMARY KEY,
+            added_at TEXT
+        )
+    """)
     # Lightweight migration for databases created before these columns existed.
     existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(digests)").fetchall()}
     for col in _NEW_COLUMNS:
@@ -171,6 +177,34 @@ def get_bookmarked(path=DB_PATH):
     """).fetchall()
     conn.close()
     return [_hydrate(r) for r in rows]
+
+
+# ------------------------------------------------------------- subscribers
+# Lets people connect their own email address for digest delivery from
+# inside the app, instead of a developer having to hardcode DIGEST_RECIPIENTS
+# as an environment variable every time someone new wants the email.
+def add_subscriber(email, path=DB_PATH):
+    conn = init_db(path)
+    conn.execute(
+        "INSERT OR IGNORE INTO subscribers (email, added_at) VALUES (?, ?)",
+        (email.strip().lower(), datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def remove_subscriber(email, path=DB_PATH):
+    conn = init_db(path)
+    conn.execute("DELETE FROM subscribers WHERE email = ?", (email.strip().lower(),))
+    conn.commit()
+    conn.close()
+
+
+def get_subscribers(path=DB_PATH):
+    conn = init_db(path)
+    rows = conn.execute("SELECT email FROM subscribers ORDER BY added_at").fetchall()
+    conn.close()
+    return [r[0] for r in rows]
 
 
 def get_digest(run_date, path=DB_PATH):
